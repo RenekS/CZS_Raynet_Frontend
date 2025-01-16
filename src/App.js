@@ -1,12 +1,8 @@
 import React from 'react';
-import RaynetPriceList from './RaynetPriceList';
+import RaynetClientInfo from './RaynetClientInfo';
 
 function App() {
-  return (
-    <div className="App">
-      <RaynetPriceList />
-    </div>
-  );
+  return <RaynetClientInfo />;
 }
 
 export default App;
