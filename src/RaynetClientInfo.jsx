@@ -10,22 +10,22 @@ import {
   Checkbox,
   Typography,
   Autocomplete,
-  Chip,
-  FormControlLabel
+  Chip
 } from '@mui/material';
 
 function RaynetClientInfo() {
+  // Stavy pro načítání dat, chyby, data, kontakty a nalezeného uživatele
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const [data, setData]       = useState(null);
   const [contacts, setContacts] = useState([]);
-  const [matchingContact, setMatchingContact] = useState(null); // Pro nalezenou osobu podle userName
+  const [matchingContact, setMatchingContact] = useState(null);
 
-  // Step state
+  // Stavy pro výběr ceníků a zobrazení dialogu
   const [selectedCeniky, setSelectedCeniky] = useState([]);
   const [showDialog, setShowDialog] = useState(false);
 
-  // Fields pro e-mail
+  // Stavy pro e‑mailové údaje
   const [template, setTemplate]   = useState("Formální nabídka 1");
   const [emailBody, setEmailBody] = useState("Dobrý den,<br><br>v příloze najdete ceník.");
   const [recipients, setRecipients] = useState([]); // počátečně prázdné
@@ -37,12 +37,15 @@ function RaynetClientInfo() {
     "Formální nabídka 3"
   ];
 
-  // Načtení parametrů z URL
+  // Získání parametrů z URL
   const searchParams = new URLSearchParams(window.location.search);
   const entityId   = searchParams.get('entityId') || 926;
   const entityName = searchParams.get('entityName') || 'Company';
   const userName   = searchParams.get('userName') || 'brno_sklad@czstyle.cz';
   const userId     = searchParams.get('userId') || 3;
+
+  // Základní URL pro API získáme z proměnné prostředí (Create React App musí mít REACT_APP_ prefix)
+  const baseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
 
   // Načtení hlavních dat: klient, ceníky a kontakty
   useEffect(() => {
@@ -51,14 +54,14 @@ function RaynetClientInfo() {
         setLoading(true);
         // Načíst data o klientovi a cenících
         const resp1 = await fetch(
-          `http://localhost:3001/api/data?entityId=${entityId}&entityName=${entityName}&userName=${userName}&userId=${userId}`
+          `${baseUrl}/api/data?entityId=${entityId}&entityName=${entityName}&userName=${userName}&userId=${userId}`
         );
         if (!resp1.ok) throw new Error(`Chyba /api/data: ${resp1.status}`);
         const jsonData = await resp1.json();
         setData(jsonData);
 
         // Načíst kontaktní osoby
-        const resp2 = await fetch(`http://localhost:3001/api/contacts?entityId=${entityId}`);
+        const resp2 = await fetch(`${baseUrl}/api/contacts?entityId=${entityId}`);
         if (!resp2.ok) throw new Error(`Chyba /api/contacts: ${resp2.status}`);
         const jsonContacts = await resp2.json();
         setContacts(jsonContacts.contacts || []);
@@ -69,9 +72,9 @@ function RaynetClientInfo() {
       }
     }
     fetchMainData();
-  }, [entityId, entityName, userName, userId]);
+  }, [entityId, entityName, userName, userId, baseUrl]);
 
-  // Hledání kontaktní osoby podle userName (porovnáváme case-insensitive s oběma poli email a email2)
+  // Hledání kontaktní osoby podle userName (case-insensitive porovnání s oběma poli email a email2)
   useEffect(() => {
     if (contacts.length > 0) {
       const match = contacts.find(c =>
@@ -82,11 +85,10 @@ function RaynetClientInfo() {
     }
   }, [contacts, userName]);
 
-  // Pro zobrazení možností v Autocomplete – vytvoříme pole objektů s dodatečnými informacemi
-  // Příklad: { id, label: "FullName - email" }
+  // Pro zobrazení možností v Autocomplete – rozšířený popis (FullName, e-mail, případně další údaje)
   const emailOptions = contacts.map(c => ({
     id: c.id,
-    label: `${c.fullName} - ${c.email || c.email2 || ''}`
+    label: `${c.fullName} - ${c.email || c.email2 || ''}` // Lze rozšířit o další údaje (funkci, příjmení apod.)
   }));
 
   // Pokud načtená data nejsou dostupná
@@ -99,10 +101,9 @@ function RaynetClientInfo() {
     setSelectedCeniky(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // Přechod do druhého kroku – dialogu
+  // Přechod do dialogu pro další krok
   const handleNextStep = () => {
-    // Neplníme automaticky příjemce – uživatel vybere, takže počáteční hodnota zůstane prázdná
-    setRecipients([]);
+    setRecipients([]); // počátečně prázdná pole pro ruční výběr
     setShowDialog(true);
   };
 
@@ -111,7 +112,7 @@ function RaynetClientInfo() {
   };
 
   const handleSendCeniky = () => {
-    // Simulujeme odeslání – zde by následovalo volání API pro generování PDF/odeslání e‑mailu
+    // Simulujeme odeslání – zde zavoláte svůj API endpoint, který vygeneruje PDF/odešle e-mail
     console.log("Vybrané ceníky:", selectedCeniky);
     console.log("Zvolená šablona:", template);
     console.log("Text e-mailu:", emailBody);
@@ -153,11 +154,11 @@ function RaynetClientInfo() {
               <tr><th>User ID:</th><td>{data.user.userId}</td></tr>
               { matchingContact && (
                 <>
-                  <tr><th>Podpis nalezené osoby:</th><td>
-                    {/* Zobrazíme údaje z nalezené osoby */}
-                    {matchingContact.fullName}
-                  </td></tr>
-                  {/* Pokud by bylo potřeba, lze přidat další řádky, například telefon či funkci */}
+                  <tr>
+                    <th>Podpis nalezené osoby:</th>
+                    <td>{matchingContact.fullName}</td>
+                  </tr>
+                  {/* Další informace (například telefon, funkci apod.) lze přidat zde, pokud budou k dispozici */}
                 </>
               )}
             </tbody>
@@ -219,16 +220,14 @@ function RaynetClientInfo() {
           <Typography gutterBottom>
             Zvolte šablonu, napište text e‑mailu a vyberte příjemce.
           </Typography>
-          {/* Box pro výběr příjemců – umístěn nad šablonu */}
+          {/* Box pro výběr příjemců */}
           <Typography variant="subtitle1" sx={{ mt: 1 }}>Příjemci e‑mailu</Typography>
           <Autocomplete
             multiple
             options={emailOptions}
             getOptionLabel={(option) => option.label}
             value={recipients}
-            onChange={(event, newValue) => {
-              setRecipients(newValue);
-            }}
+            onChange={(event, newValue) => setRecipients(newValue)}
             renderTags={(value, getTagProps) =>
               value.map((option, index) => (
                 <Chip variant="outlined" label={option.label} {...getTagProps({ index })} key={option.id} />
@@ -270,7 +269,7 @@ function RaynetClientInfo() {
               <Typography variant="body2">
                 {matchingContact.fullName}
               </Typography>
-              { /* Pokud by bylo k dispozici více informací (např. funkce), můžete přidat další řádky */}
+              {/* Případně můžete přidat telefon, funkci apod., pokud data budou k dispozici */}
             </Box>
           )}
         </DialogContent>
