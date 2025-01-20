@@ -13,46 +13,100 @@ import {
   Chip
 } from '@mui/material';
 
+const getFirstName = (fullName) => fullName ? fullName.split(' ')[0] : '';
+
+const emailTemplate1 = (contact) => {
+  const firstName = getFirstName(contact?.fullName);
+  return `
+    Vážený(á) ${firstName || 'zákazníku'},
+    
+    děkujeme Vám za Váš zájem o naše produkty. V příloze naleznete detailní ceník.
+    
+    Pro jakékoliv dotazy nás neváhejte kontaktovat.
+    
+    S pozdravem,
+    Vaše společnost
+  `;
+};
+
+const emailTemplate2 = (contact) => {
+  const firstName = getFirstName(contact?.fullName);
+  return `
+    Dobrý den ${firstName || ''},
+    
+    na základě Vašeho požadavku Vám zasíláme aktuální nabídku cen.
+    
+    V případě potřeby nás kontaktujte.
+    
+    S úctou,
+    Váš tým společnosti
+  `;
+};
+
+const emailTemplate3 = (contact) => {
+  const firstName = getFirstName(contact?.fullName);
+  return `
+    Ahoj ${firstName || 'příteli'},
+    
+    děkujeme za Váš zájem! V příloze najdete naši nabídku s aktuálními cenami.
+    
+    Ozvěte se, pokud budete potřebovat další informace.
+    
+    Hezký den,
+    Tým Vaší společnosti
+  `;
+};
+
+const getEmailBody = (template, contact) => {
+  switch(template) {
+    case "Formální nabídka 1":
+      return emailTemplate1(contact);
+    case "Formální nabídka 2":
+      return emailTemplate2(contact);
+    case "Formální nabídka 3":
+      return emailTemplate3(contact);
+    default:
+      return emailTemplate1(contact);
+  }
+};
+
 function RaynetClientInfo() {
-  // Stavy pro načítání dat, chyby, data, kontakty a nalezeného uživatele
+  // Stavy pro data, načítání, chyby, kontakty apod.
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const [data, setData]       = useState(null);
   const [contacts, setContacts] = useState([]);
   const [matchingContact, setMatchingContact] = useState(null);
 
-  // Stavy pro výběr ceníků a zobrazení dialogu
+  // Stavy pro výběr ceníků a dialogu
   const [selectedCeniky, setSelectedCeniky] = useState([]);
   const [showDialog, setShowDialog] = useState(false);
 
-  // Stavy pro e‑mailové údaje
+  // Stavy pro e‑mail
   const [template, setTemplate]   = useState("Formální nabídka 1");
-  const [emailBody, setEmailBody] = useState("Dobrý den,<br><br>v příloze najdete ceník.");
-  const [recipients, setRecipients] = useState([]); // počátečně prázdné
+  const [emailBody, setEmailBody] = useState("");
+  const [recipients, setRecipients] = useState([]);
 
-  // Předdefinované šablony
   const templateOptions = [
     "Formální nabídka 1",
     "Formální nabídka 2",
     "Formální nabídka 3"
   ];
 
-  // Získání parametrů z URL
+  // Parametry z URL
   const searchParams = new URLSearchParams(window.location.search);
   const entityId   = searchParams.get('entityId') || 926;
   const entityName = searchParams.get('entityName') || 'Company';
   const userName   = searchParams.get('userName') || 'brno_sklad@czstyle.cz';
   const userId     = searchParams.get('userId') || 3;
+  const baseUrl    = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
+  console.log("API baseUrl:", baseUrl);
 
-  // Základní URL pro API získáme z proměnné prostředí (Create React App musí mít REACT_APP_ prefix)
-  const baseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
-
-  // Načtení hlavních dat: klient, ceníky a kontakty
+  // Načítání dat z API
   useEffect(() => {
     async function fetchMainData() {
       try {
         setLoading(true);
-        // Načíst data o klientovi a cenících
         const resp1 = await fetch(
           `${baseUrl}/api/data?entityId=${entityId}&entityName=${entityName}&userName=${userName}&userId=${userId}`
         );
@@ -60,7 +114,6 @@ function RaynetClientInfo() {
         const jsonData = await resp1.json();
         setData(jsonData);
 
-        // Načíst kontaktní osoby
         const resp2 = await fetch(`${baseUrl}/api/contacts?entityId=${entityId}`);
         if (!resp2.ok) throw new Error(`Chyba /api/contacts: ${resp2.status}`);
         const jsonContacts = await resp2.json();
@@ -74,7 +127,7 @@ function RaynetClientInfo() {
     fetchMainData();
   }, [entityId, entityName, userName, userId, baseUrl]);
 
-  // Hledání kontaktní osoby podle userName (case-insensitive porovnání s oběma poli email a email2)
+  // Hledání kontaktní osoby dle userName
   useEffect(() => {
     if (contacts.length > 0) {
       const match = contacts.find(c =>
@@ -85,25 +138,28 @@ function RaynetClientInfo() {
     }
   }, [contacts, userName]);
 
-  // Pro zobrazení možností v Autocomplete – rozšířený popis (FullName, e-mail, případně další údaje)
+  // Nastavení výchozího textu e‑mailu při změně šablony nebo kontaktní osoby
+  useEffect(() => {
+    setEmailBody(getEmailBody(template, matchingContact));
+  }, [template, matchingContact]);
+
+  // Možnosti pro Autocomplete – příjemci
   const emailOptions = contacts.map(c => ({
     id: c.id,
-    label: `${c.fullName} - ${c.email || c.email2 || ''}` // Lze rozšířit o další údaje (funkci, příjmení apod.)
+    label: `${c.fullName} - ${c.email || c.email2 || 'Bez e‑mailu'}`
   }));
 
-  // Pokud načtená data nejsou dostupná
   if (loading) return <div>Načítám data...</div>;
   if (error) return <div style={{ color: 'red' }}>Chyba: {error}</div>;
   if (!data) return <div>Žádná data</div>;
 
-  // Výběr ceníků
+  // Ovládání výběru ceníků
   const handleCenikCheckbox = (id) => {
     setSelectedCeniky(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // Přechod do dialogu pro další krok
   const handleNextStep = () => {
-    setRecipients([]); // počátečně prázdná pole pro ruční výběr
+    setRecipients([]);
     setShowDialog(true);
   };
 
@@ -111,25 +167,54 @@ function RaynetClientInfo() {
     setShowDialog(false);
   };
 
-  const handleSendCeniky = () => {
-    // Simulujeme odeslání – zde zavoláte svůj API endpoint, který vygeneruje PDF/odešle e-mail
-    console.log("Vybrané ceníky:", selectedCeniky);
-    console.log("Zvolená šablona:", template);
-    console.log("Text e-mailu:", emailBody);
-    console.log("Příjemci:", recipients);
-    alert("Ceníky odeslány (simulace)");
+  // Funkce generující náhled DOCX s logováním vybraných položek
+const handlePreviewDocx = async () => {
+  if (selectedCeniky.length === 0) return;
+  // Použijeme první vybrané ID ceníku
+  const priceListId = selectedCeniky[0];
+  console.log(`Selected priceListId: ${priceListId}`);
+
+  // Pokusíme se najít detail daného ceníku z načtených dat
+  const selectedPriceList = data.priceLists.find((price) => price.id === priceListId);
+  if (selectedPriceList) {
+    console.log("PriceList detail:", selectedPriceList);
+    console.log("Items (položky) tohoto ceníku:", selectedPriceList.items);
+  } else {
+    console.log("Ceník s tímto ID nebyl nalezen!");
+  }
+
+  try {
+    // Voláme endpoint s použitím query parametru (priceListId)
+    const response = await fetch(`${baseUrl}/api/generate-price-list-docx/${priceListId}`);
+    if (!response.ok) {
+      throw new Error('Chyba při generování dokumentu');
+    }
+    const blob = await response.blob();
+    // Otevření souboru v novém okně (alternativně můžete spustit stažení)
+    const url = window.URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  } catch (error) {
+    console.error("Error in handlePreviewDocx:", error);
+    alert("Chyba při generování náhledu ceníku");
+  }
+};
+
+
+  // Funkce pro odeslání ceníků (zatím simulační – e‑maily se neodesílají)
+  const handleSendCeniky = async () => {
+    alert("E‑maily zatím neodesíláme. Použijte tlačítko 'Generovat náhled ceníku' pro zobrazení dokumentu.");
     setShowDialog(false);
   };
 
   return (
     <Box sx={{ fontFamily: 'Arial, sans-serif', backgroundColor: '#f5f5f5', p: 2 }}>
-      {/* Horní pruh */}
+      {/* Horní lišta */}
       <Box sx={{ backgroundColor: '#007b8a', color: '#fff', p: 2, display: 'flex', justifyContent: 'space-between' }}>
         <Typography variant="h6">Správa ceníků</Typography>
         <Button variant="contained" sx={{ backgroundColor: '#00a3b1' }}>+ Přidat záznam</Button>
       </Box>
 
-      {/* Informace o klientovi a uživateli */}
+      {/* Informace */}
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mt: 2 }}>
         <Box sx={{ flex: 1, minWidth: 300, backgroundColor: '#fff', p: 2, borderRadius: 1, boxShadow: 1 }}>
           <Typography variant="h6" sx={{ backgroundColor: '#007b8a', color: '#fff', p: 1 }}>
@@ -153,13 +238,10 @@ function RaynetClientInfo() {
               <tr><th>User Name:</th><td>{data.user.userName}</td></tr>
               <tr><th>User ID:</th><td>{data.user.userId}</td></tr>
               { matchingContact && (
-                <>
-                  <tr>
-                    <th>Podpis nalezené osoby:</th>
-                    <td>{matchingContact.fullName}</td>
-                  </tr>
-                  {/* Další informace (například telefon, funkci apod.) lze přidat zde, pokud budou k dispozici */}
-                </>
+                <tr>
+                  <th>Podpis:</th>
+                  <td>{matchingContact.fullName}</td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -174,9 +256,9 @@ function RaynetClientInfo() {
             <thead>
               <tr>
                 <th style={{ padding: '8px', border: '1px solid #ddd' }}>Vybrat</th>
-                <th style={{ padding: '8px', border: '1px solid #ddd' }}>ID ceníku</th>
-                <th style={{ padding: '8px', border: '1px solid #ddd' }}>Kód ceníku</th>
-                <th style={{ padding: '8px', border: '1px solid #ddd' }}>Název ceníku</th>
+                <th style={{ padding: '8px', border: '1px solid #ddd' }}>ID</th>
+                <th style={{ padding: '8px', border: '1px solid #ddd' }}>Kód</th>
+                <th style={{ padding: '8px', border: '1px solid #ddd' }}>Název</th>
                 <th style={{ padding: '8px', border: '1px solid #ddd' }}>Platnost od</th>
                 <th style={{ padding: '8px', border: '1px solid #ddd' }}>Platnost do</th>
               </tr>
@@ -203,24 +285,36 @@ function RaynetClientInfo() {
           <Typography variant="body1" sx={{ color: '#999' }}>Ceníky nenalezeny.</Typography>
         )}
 
-        <Button
-          variant="contained"
-          sx={{ mt: 2, backgroundColor: '#00a3b1' }}
-          onClick={handleNextStep}
-          disabled={selectedCeniky.length === 0}
-        >
-          Pokračovat
-        </Button>
+        {/* Tlačítka */}
+        <Box sx={{ mt: 2 }}>
+          <Button
+            variant="contained"
+            sx={{ mr: 1, backgroundColor: '#00a3b1' }}
+            onClick={handleNextStep}
+            disabled={selectedCeniky.length === 0}
+          >
+            Pokračovat
+          </Button>
+
+          {/* Upravené tlačítko pro generování náhledu DOCX */}
+          <Button
+            variant="outlined"
+            sx={{ backgroundColor: '#fff', color: '#007b8a' }}
+            onClick={handlePreviewDocx}
+            disabled={selectedCeniky.length === 0}
+          >
+            Generovat náhled ceníku
+          </Button>
+        </Box>
       </Box>
 
-      {/* Dialog pro výběr šablony, textu e‑mailu a příjemců */}
+      {/* Dialog pro nastavení e‑mailu (zatím simulační – e‑maily se neodesílají) */}
       <Dialog open={showDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
         <DialogTitle>Odeslání ceníku</DialogTitle>
         <DialogContent dividers>
           <Typography gutterBottom>
             Zvolte šablonu, napište text e‑mailu a vyberte příjemce.
           </Typography>
-          {/* Box pro výběr příjemců */}
           <Typography variant="subtitle1" sx={{ mt: 1 }}>Příjemci e‑mailu</Typography>
           <Autocomplete
             multiple
@@ -253,7 +347,7 @@ function RaynetClientInfo() {
           </TextField>
 
           <TextField
-            label="Text e-mailu (HTML)"
+            label="Text e‑mailu (HTML)"
             fullWidth
             multiline
             rows={4}
@@ -262,14 +356,12 @@ function RaynetClientInfo() {
             onChange={(e) => setEmailBody(e.target.value)}
           />
 
-          {/* Patička – Podpis nalezené osoby */}
           {matchingContact && (
             <Box sx={{ border: '1px solid #ddd', borderRadius: 1, p: 1, mt: 2, backgroundColor: '#fafafa' }}>
               <Typography variant="subtitle1">Podpis nalezené osoby</Typography>
               <Typography variant="body2">
                 {matchingContact.fullName}
               </Typography>
-              {/* Případně můžete přidat telefon, funkci apod., pokud data budou k dispozici */}
             </Box>
           )}
         </DialogContent>
