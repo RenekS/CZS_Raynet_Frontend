@@ -27,8 +27,6 @@ import {
 } from '@mui/material';
 import OfferTable from './OfferTable'; // <-- Import podkomponenty pro vykreslování tabulky
 
-// ... ostatní importy a pomocné funkce
-
 // Pomocná funkce pro získání prvního jména
 function getFirstName(fullName) {
   if (!fullName) return '';
@@ -361,10 +359,6 @@ export default function RaynetClientInfo() {
     setShowDialog(false);
   }
 
-  async function downloadOfferPDF(offerId) {
-    alert(`Simulace stažení PDF pro offerId=${offerId}`);
-  }
-
   //////////////////////////////////////////////////////////////////////////////////
   // Nové Ovládací Prvky pro Typ Ceníku a Parametr Třídění
   //////////////////////////////////////////////////////////////////////////////////
@@ -479,12 +473,10 @@ export default function RaynetClientInfo() {
             productDetails={productDetails}
             productLoading={productLoading}
             productError={productError}
-            downloadOfferPDF={downloadOfferPDF}
             offerType={offerType}       // 'noQuantity' nebo 'withQuantity'
             groupByKey={groupByKey}     // např. 'Sirka_04504'
             supplierData={supplierData} // Přidáno
             buyerData={companyData}     // Přidáno
-            contactPerson={personData}  // Přidáno
           />
         </Box>
       )}
@@ -549,9 +541,9 @@ export default function RaynetClientInfo() {
             helperText="Vyberte šablonu e‑mailu"
           >
             {templateOptions.map((opt) => (
-              <Box component="option" key={opt} value={opt}>
+              <MenuItem key={opt} value={opt}>
                 {opt}
-              </Box>
+              </MenuItem>
             ))}
           </TextField>
 
