@@ -21,7 +21,7 @@ import OfferTable from './OfferTable';
 export default function RaynetClientInfo() {
   // Parametry z URL (jen příklad)
   const searchParams = new URLSearchParams(window.location.search);
-  const entityId   = searchParams.get('entityId') || 30;
+  const entityId   = searchParams.get('entityId') ;
   const entityName = searchParams.get('entityName') || 'offer';
   const baseUrl    = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
 
@@ -57,8 +57,8 @@ export default function RaynetClientInfo() {
     ico: "25560174",
     dic: "CZ25560174",
     ownerEmail: "info@czstyle.cz",
-    ownerTel: "+420 777 777 777",
-    ownerName: "Pan Prodejce"
+    ownerTel: "+420 571 120 100",
+    ownerName: "Zákaznický servis"
   };
 
   //////////////////////////////////////////////////////////////////////////////////
