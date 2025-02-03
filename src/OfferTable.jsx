@@ -9,7 +9,15 @@ import {
   RadioGroup,
   FormControlLabel,
   Radio,
-  Button
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+  Divider
 } from '@mui/material';
 
 /**
@@ -60,6 +68,7 @@ function calculatePriceAfterDiscount(price, discountPercent) {
 
 /**
  * Seskupí položky nabídky podle zadaného klíče v customFields.
+ * Pokud groupByKey je "none" nebo null, všechny položky skončí ve stejné skupině.
  */
 function groupItemsByCustomField(items, productDetails, groupByKey) {
   const grouped = {};
@@ -67,7 +76,7 @@ function groupItemsByCustomField(items, productDetails, groupByKey) {
     const prodId = item.priceListItem.product.id;
     const product = productDetails[prodId];
     if (!product) return;
-    let groupValue = '(Nezařazeno)';
+    let groupValue = "(Nezařazeno)";
     if (groupByKey && product.customFields && product.customFields[groupByKey]) {
       groupValue = String(product.customFields[groupByKey]);
     }
@@ -84,8 +93,8 @@ export default function OfferTable({
   productDetails,
   supplierData,
   buyerData,
-  groupByKey,
-  offerType,        // 'withQuantity' nebo 'noQuantity'
+  groupByKey, // počáteční hodnota seskupení (např. "Naprava_fe9fa")
+  offerType,  // počáteční hodnota – "withQuantity" nebo "noQuantity"
   onSummaryReady
 }) {
   const [ownerContact, setOwnerContact] = useState(null);
@@ -93,24 +102,20 @@ export default function OfferTable({
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [errorContacts, setErrorContacts] = useState(null);
 
-  // Lokální stav pro volbu šablony
+  // Stav pro výběr typu šablony (s množstvím / bez množství)
   const [localOfferType, setLocalOfferType] = useState(offerType || 'withQuantity');
+  // Stav pro výběr seskupení – možnosti: "Naprava_fe9fa", "Rozmer_5ce97", "Provoz_2c25f", "none"
+  const [localGroupByKey, setLocalGroupByKey] = useState(groupByKey || 'Naprava_fe9fa');
 
-  /**
-   * Získáme základní URL pro API z env proměnné
-   * (pokud není, spadne fallback na http://localhost:3001)
-   */
   const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
 
-  // 1) Načtení kontaktních údajů dodavatele (owner)
+  // Načtení kontaktních údajů dodavatele (owner)
   useEffect(() => {
     async function fetchOwner() {
       if (offerData?.owner?.id) {
         setLoadingContacts(true);
         try {
-          const res = await fetch(
-            `${API_BASE_URL}/api/person-detail/${offerData.owner.id}`
-          );
+          const res = await fetch(`${API_BASE_URL}/api/person-detail/${offerData.owner.id}`);
           if (!res.ok) {
             const errData = await res.json();
             throw new Error(errData.error || 'Chyba při načítání údajů dodavatele.');
@@ -128,15 +133,13 @@ export default function OfferTable({
     fetchOwner();
   }, [offerData, API_BASE_URL]);
 
-  // 2) Načtení kontaktních údajů odběratele (person)
+  // Načtení kontaktních údajů odběratele (person)
   useEffect(() => {
     async function fetchPerson() {
       if (offerData?.person?.id) {
         setLoadingContacts(true);
         try {
-          const res = await fetch(
-            `${API_BASE_URL}/api/person-detail/${offerData.person.id}`
-          );
+          const res = await fetch(`${API_BASE_URL}/api/person-detail/${offerData.person.id}`);
           if (!res.ok) {
             const errData = await res.json();
             throw new Error(errData.error || 'Chyba při načítání údajů odběratele.');
@@ -154,19 +157,16 @@ export default function OfferTable({
     fetchPerson();
   }, [offerData, API_BASE_URL]);
 
-  // 3) Sestavení offerSummary
+  // Sestavení offerSummary včetně seskupení dle aktuální volby a s přátelským názvem skupin
   const offerSummary = useMemo(() => {
     if (!offerData || !offerData.items || Object.keys(productDetails).length === 0) {
       return null;
     }
-
-    // Data platnosti nabídky
     const validFrom = offerData.validFrom || "Neuvedeno";
     const expirationDate = offerData.expirationDate
       ? offerData.expirationDate
       : (validFrom !== "Neuvedeno" ? addDays(validFrom, 10) : "Neuvedeno");
 
-    // Obohacení položek
     const enrichedItems = offerData.items.map(item => {
       const prodId = item.priceListItem.product.id;
       const details = productDetails[prodId];
@@ -176,10 +176,29 @@ export default function OfferTable({
       return item;
     });
 
-    // Seskupení položek
-    const groupedItems = groupItemsByCustomField(enrichedItems, productDetails, groupByKey);
+    // Pokud se má seskupovat, použijeme groupByKey, jinak všechny položky v jedné skupině
+    const groupingKey = localGroupByKey === "none" ? null : localGroupByKey;
+    const groupedItems = groupItemsByCustomField(enrichedItems, productDetails, groupingKey);
 
-    // Výchozí data dodavatele
+    // Mapa pro přátelské názvy seskupení – použije se jak ve frontendu, tak v šabloně
+    const groupLabelMapping = {
+      Naprava_fe9fa: "Náprava",
+      Rozmer_5ce97: "Rozměr",
+      Provoz_2c25f: "Provoz"
+    };
+
+    // Transformace původních klíčů do přátelských názvů
+    let friendlyGroupedItems = {};
+    if (localGroupByKey !== "none") {
+      const label = groupLabelMapping[localGroupByKey] || "Skupina";
+      Object.entries(groupedItems).forEach(([key, items]) => {
+        // Pokud je hodnota "(Nezařazeno)", zobrazíme pouze název skupiny bez hodnoty
+        friendlyGroupedItems[label + (key === "(Nezařazeno)" ? "" : `: ${key}`)] = items;
+      });
+    } else {
+      friendlyGroupedItems = groupedItems;
+    }
+
     const defaultSupplier = {
       companyName: 'CZECH STYLE, spol. s r.o.',
       street: 'Tečovská 1239',
@@ -216,7 +235,6 @@ export default function OfferTable({
           tel: '+420 571 120 100'
         };
 
-    // Obdobně pro kupujícího
     const buyerInfo = personContact
       ? {
           name: buyerData?.name || 'Neuvedeno',
@@ -257,7 +275,6 @@ export default function OfferTable({
       offerCode: offerData?.code || "NAB-KÓD NEUVEDEN",
       validFrom,
       expirationDate,
-      // Přidané pole description s hodnotou z offerData.description
       description: offerData.description,
       supplier: {
         info: supplierInfo,
@@ -267,12 +284,13 @@ export default function OfferTable({
         info: buyerInfo,
         contact: buyerContactInfo
       },
-      productGroups: groupedItems
+      // Předáme seskupené položky s přátelským názvem skupiny
+      productGroups: friendlyGroupedItems
     };
   }, [
     offerData,
     productDetails,
-    groupByKey,
+    localGroupByKey,
     supplierData,
     buyerData,
     ownerContact,
@@ -280,7 +298,7 @@ export default function OfferTable({
     localOfferType
   ]);
 
-  // Předání offerSummary do rodiče
+  // Předání offerSummary do rodiče (pokud je potřeba)
   useEffect(() => {
     if (offerSummary && onSummaryReady) {
       onSummaryReady(offerSummary);
@@ -291,12 +309,21 @@ export default function OfferTable({
   if (errorContacts) return <Alert severity="error">{errorContacts}</Alert>;
   if (!offerData || !offerSummary) return <Box>Načítám souhrn nabídky...</Box>;
 
+  // Funkce pro vykreslení nadpisu skupiny – nyní zobrazí již přátelský název
+  const renderGroupHeader = (groupKey) => {
+    if (localGroupByKey === "none") return null;
+    return (
+      <Box sx={{ mb: 1 }}>
+        <strong>{groupKey}</strong>
+      </Box>
+    );
+  };
+
   /**
-   * Stáhnout PDF – s množstvím nebo bez
+   * Funkce pro stažení PDF – volá správný endpoint dle volby šablony
    */
   async function handleDownloadPDF() {
     try {
-      // Rozhodneme se dle localOfferType
       const endpoint =
         localOfferType === 'withQuantity'
           ? `${API_BASE_URL}/api/generate-pdf-with-quantity`
@@ -310,8 +337,6 @@ export default function OfferTable({
       if (!resp.ok) {
         throw new Error(`Chyba při generování PDF: ${resp.status} ${resp.statusText}`);
       }
-
-      // Stáhneme PDF
       const blob = await resp.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -321,18 +346,63 @@ export default function OfferTable({
         : 'nabidka-without-quantity.pdf';
       link.click();
       window.URL.revokeObjectURL(url);
-
     } catch (err) {
       console.error('Chyba při stahování PDF:', err);
       alert('Nastala chyba při stahování PDF: ' + err.message);
     }
   }
 
+  // Funkce pro vykreslení přehledu produktů pomocí MUI Table
+  const renderProductOverview = () => {
+    return Object.keys(offerSummary.productGroups).map((groupKey) => {
+      const items = offerSummary.productGroups[groupKey];
+      return (
+        <Box key={groupKey} sx={{ mb: 3 }}>
+          {renderGroupHeader(groupKey)}
+          <TableContainer component={Paper} variant="outlined">
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Kód</TableCell>
+                  <TableCell>Název produktu</TableCell>
+                  <TableCell align="center">Počet</TableCell>
+                  <TableCell align="right">Cena/ks</TableCell>
+                  <TableCell align="right">Sleva (%)</TableCell>
+                  <TableCell align="right">Cena po slevě</TableCell>
+                  <TableCell align="right">Celkem</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {items.map((item) => {
+                  const product = item.priceListItem.product;
+                  const priceRaw = item.priceListItem.price;
+                  const discountRaw = item.discountPercent;
+                  const priceAfter = calculatePriceAfterDiscount(priceRaw, discountRaw);
+                  const quantityValue = item.count || 0;
+                  const totalPrice = (parseFloat(priceAfter) * parseFloat(quantityValue)).toFixed(2);
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell>{showOrNeuvedeno(product?.code)}</TableCell>
+                      <TableCell>{showOrNeuvedeno(product?.name)}</TableCell>
+                      <TableCell align="center">{quantityValue}</TableCell>
+                      <TableCell align="right">{priceRaw}</TableCell>
+                      <TableCell align="right">{discountRaw}</TableCell>
+                      <TableCell align="right">{priceAfter}</TableCell>
+                      <TableCell align="right">{totalPrice}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      );
+    });
+  };
+
   return (
     <Paper sx={{ p: 2, m: 2 }}>
-      <h2>Offer Summary</h2>
-
-      {/* Přepínač "S množstvím" / "Bez množství" */}
+      {/* Přepínač pro výběr typu šablony */}
       <FormControl component="fieldset" sx={{ mb: 2 }}>
         <FormLabel component="legend">Typ šablony</FormLabel>
         <RadioGroup
@@ -346,6 +416,22 @@ export default function OfferTable({
         </RadioGroup>
       </FormControl>
 
+      {/* Přepínač pro výběr seskupení produktů */}
+      <FormControl component="fieldset" sx={{ mb: 2 }}>
+        <FormLabel component="legend">Seskupovat produkty podle:</FormLabel>
+        <RadioGroup
+          row
+          name="groupByKey"
+          value={localGroupByKey}
+          onChange={(e) => setLocalGroupByKey(e.target.value)}
+        >
+          <FormControlLabel value="Naprava_fe9fa" control={<Radio />} label="Náprava" />
+          <FormControlLabel value="Rozmer_5ce97" control={<Radio />} label="Rozměr" />
+          <FormControlLabel value="Provoz_2c25f" control={<Radio />} label="Provoz" />
+          <FormControlLabel value="none" control={<Radio />} label="Nezařazeno" />
+        </RadioGroup>
+      </FormControl>
+
       {/* Tlačítko pro generování PDF */}
       <Box sx={{ mb: 2 }}>
         <Button variant="contained" onClick={handleDownloadPDF}>
@@ -353,8 +439,12 @@ export default function OfferTable({
         </Button>
       </Box>
 
-      {/* Pro kontrolu, co se posílá do serveru */}
-      <pre>{JSON.stringify(offerSummary, null, 2)}</pre>
+      {/* Přehled produktů */}
+      <Divider sx={{ mb: 2 }} />
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        Přehled produktů
+      </Typography>
+      {renderProductOverview()}
     </Paper>
   );
 }
