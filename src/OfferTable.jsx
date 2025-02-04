@@ -50,14 +50,30 @@ function showOrNeuvedeno(value) {
 }
 
 /**
+ * Vrátí zadanou hodnotu nebo prázdný řetězec.
+ */
+function showOrBlank(value) {
+  return value == null || value === '' ? '' : value;
+}
+
+/**
+ * Výpočet ceny po slevě.
+ */
+function calculatePriceAfterDiscount(price, discountPercent) {
+  const p = parseFloat(price);
+  const d = parseFloat(discountPercent);
+  if (isNaN(p) || isNaN(d)) return "";
+  return (p * (1 - d / 100)).toFixed(2);
+}
+
+/**
  * Seskupí položky nabídky podle zadaného klíče v customFields.
  * Pokud groupByKey je "none" nebo null, všechny položky skončí ve stejné skupině.
  */
 function groupItemsByCustomField(items, productDetails, groupByKey) {
   const grouped = {};
   items.forEach(item => {
-    // Pro seskupení použijeme nadále hodnoty z productDetails, pokud jsou dostupné
-    const prodId = item.priceListItem?.product?.id;
+    const prodId = item.priceListItem.product.id;
     const product = productDetails[prodId];
     if (!product) return;
     let groupValue = "(Nezařazeno)";
@@ -92,12 +108,6 @@ export default function OfferTable({
   const [localGroupByKey, setLocalGroupByKey] = useState(groupByKey || 'Naprava_fe9fa');
 
   const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
-
-  // Výpis dat do konzole pro debugging
-  useEffect(() => {
-    console.log('productDetails:', productDetails);
-    console.log('offerData:', offerData);
-  }, [productDetails, offerData]);
 
   // Načtení kontaktních údajů dodavatele (owner)
   useEffect(() => {
@@ -147,8 +157,7 @@ export default function OfferTable({
     fetchPerson();
   }, [offerData, API_BASE_URL]);
 
-  // Sestavení offerSummary – nyní se pracuje s offerData.items,
-  // přičemž pro seskupení využíváme data z productDetails (pokud jsou k dispozici)
+  // Sestavení offerSummary včetně seskupení dle aktuální volby a s přátelským názvem skupin
   const offerSummary = useMemo(() => {
     if (!offerData || !offerData.items || Object.keys(productDetails).length === 0) {
       return null;
@@ -158,22 +167,34 @@ export default function OfferTable({
       ? offerData.expirationDate
       : (validFrom !== "Neuvedeno" ? addDays(validFrom, 10) : "Neuvedeno");
 
+    const enrichedItems = offerData.items.map(item => {
+      const prodId = item.priceListItem.product.id;
+      const details = productDetails[prodId];
+      if (details) {
+        item.priceListItem.product = { ...item.priceListItem.product, ...details };
+      }
+      return item;
+    });
+
     // Pokud se má seskupovat, použijeme groupByKey, jinak všechny položky v jedné skupině
     const groupingKey = localGroupByKey === "none" ? null : localGroupByKey;
-    const groupedItems = groupItemsByCustomField(offerData.items, productDetails, groupingKey);
+    const groupedItems = groupItemsByCustomField(enrichedItems, productDetails, groupingKey);
 
-    // Mapa pro přátelské názvy seskupení
+    // Mapa pro přátelské názvy seskupení – použije se jak ve frontendu, tak v šabloně
     const groupLabelMapping = {
       Naprava_fe9fa: "Náprava",
       Rozmer_5ce97: "Rozměr",
       Provoz_2c25f: "Provoz"
     };
 
+    // Transformace původních klíčů do přátelských názvů
     let friendlyGroupedItems = {};
     if (localGroupByKey !== "none") {
       const label = groupLabelMapping[localGroupByKey] || "Skupina";
       Object.entries(groupedItems).forEach(([key, items]) => {
-        friendlyGroupedItems[label + (key === "(Nezařazeno)" ? "" : `: ${key}`)] = items;
+        // Pokud je hodnota "(Nezařazeno)", zobrazíme pouze název skupiny bez hodnoty
+        const groupLabel = key === "(Nezařazeno)" ? label : `${label}: ${key}`;
+        friendlyGroupedItems[groupLabel] = items;
       });
     } else {
       friendlyGroupedItems = groupedItems;
@@ -264,6 +285,7 @@ export default function OfferTable({
         info: buyerInfo,
         contact: buyerContactInfo
       },
+      // Předáme seskupené položky s přátelským názvem skupiny
       productGroups: friendlyGroupedItems
     };
   }, [
@@ -276,10 +298,13 @@ export default function OfferTable({
     personContact,
     localOfferType
   ]);
-
+ 
   // Předání offerSummary do rodiče (pokud je potřeba)
   useEffect(() => {
-    if (offerSummary && onSummaryReady) {
+   
+    if (offerSummary && onSummaryReady) 
+      console.log("offerSummary:", offerSummary);
+    {
       onSummaryReady(offerSummary);
     }
   }, [offerSummary, onSummaryReady]);
@@ -288,7 +313,7 @@ export default function OfferTable({
   if (errorContacts) return <Alert severity="error">{errorContacts}</Alert>;
   if (!offerData || !offerSummary) return <Box>Načítám souhrn nabídky...</Box>;
 
-  // Funkce pro vykreslení nadpisu skupiny – zobrazí přátelský název
+  // Funkce pro vykreslení nadpisu skupiny – nyní zobrazí již přátelský název
   const renderGroupHeader = (groupKey) => {
     if (localGroupByKey === "none") return null;
     return (
@@ -299,15 +324,39 @@ export default function OfferTable({
   };
 
   /**
-   * Funkce pro vykreslení přehledu produktů pomocí MUI Table.
-   * Hodnoty pro tabulku se berou z offerData.items:
-   * - Ceníková cena: item.price
-   * - Název: item.name
-   * - Počet: item.count
-   * - Sleva (%): item.discountPercent
-   * - Cena po slevě: Math.round(item.price * (1 - item.discountPercent/100))
-   * - Celkem: cena po slevě * item.count
+   * Funkce pro stažení PDF – volá správný endpoint dle volby šablony
    */
+  async function handleDownloadPDF() {
+    try {
+      const endpoint =
+        localOfferType === 'withQuantity'
+          ? `${API_BASE_URL}/api/generate-pdf-with-quantity`
+          : `${API_BASE_URL}/api/generate-pdf-without-quantity`;
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offerSummary })
+      });
+      if (!resp.ok) {
+        throw new Error(`Chyba při generování PDF: ${resp.status} ${resp.statusText}`);
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = localOfferType === 'withQuantity'
+        ? 'nabidka-with-quantity.pdf'
+        : 'nabidka-without-quantity.pdf';
+      link.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Chyba při stahování PDF:', err);
+      alert('Nastala chyba při stahování PDF: ' + err.message);
+    }
+  }
+
+  // Funkce pro vykreslení přehledu produktů pomocí MUI Table
   const renderProductOverview = () => {
     return Object.keys(offerSummary.productGroups).map((groupKey) => {
       const items = offerSummary.productGroups[groupKey];
@@ -320,8 +369,8 @@ export default function OfferTable({
                 <TableRow>
                   <TableCell>Kód</TableCell>
                   <TableCell>Název produktu</TableCell>
-                  <TableCell align="right">Ceníková cena</TableCell>
                   <TableCell align="center">Počet</TableCell>
+                  <TableCell align="right">Cena/ks</TableCell>
                   <TableCell align="right">Sleva (%)</TableCell>
                   <TableCell align="right">Cena po slevě</TableCell>
                   <TableCell align="right">Celkem</TableCell>
@@ -329,30 +378,21 @@ export default function OfferTable({
               </TableHead>
               <TableBody>
                 {items.map((item) => {
-                  // Kód získáme z priceListItem.product.code, pokud je k dispozici
-                  const productCode = showOrNeuvedeno(item.priceListItem?.product?.code);
-                  // Název přímo z item.name
-                  const productName = showOrNeuvedeno(item.name);
-                  // Ceníková cena z item.price
-                  const listPrice = parseFloat(item.price) || 0;
-                  // Počet kusů
+                  const product = item.priceListItem.product;
+                  const priceRaw = item.price;
+                  const discountRaw = item.discountPercent;
+                  const priceAfter = calculatePriceAfterDiscount(priceRaw, discountRaw);
                   const quantityValue = item.count || 0;
-                  // Sleva (%)
-                  const discount = parseFloat(item.discountPercent) || 0;
-                  // Cena po slevě dopočítaná matematicky a zaokrouhlená na celé koruny
-                  const priceAfter = Math.round(listPrice * (1 - discount / 100));
-                  // Celková cena
-                  const totalPrice = Math.round(priceAfter * quantityValue);
-
+                  const totalPrice = (parseFloat(priceAfter) * parseFloat(quantityValue)).toFixed(2);
                   return (
                     <TableRow key={item.id}>
-                      <TableCell>{productCode}</TableCell>
-                      <TableCell>{productName}</TableCell>
-                      <TableCell align="right">{listPrice ? listPrice.toLocaleString('cs-CZ') + ' Kč' : 'Neuvedeno'}</TableCell>
+                      <TableCell>{showOrNeuvedeno(product?.code)}</TableCell>
+                      <TableCell>{showOrNeuvedeno(product?.name)}</TableCell>
                       <TableCell align="center">{quantityValue}</TableCell>
-                      <TableCell align="right">{discount ? discount + '%' : 'Neuvedeno'}</TableCell>
-                      <TableCell align="right">{priceAfter ? priceAfter.toLocaleString('cs-CZ') + ' Kč' : ''}</TableCell>
-                      <TableCell align="right">{totalPrice ? totalPrice.toLocaleString('cs-CZ') + ' Kč' : ''}</TableCell>
+                      <TableCell align="right">{priceRaw}</TableCell>
+                      <TableCell align="right">{discountRaw}</TableCell>
+                      <TableCell align="right">{priceAfter}</TableCell>
+                      <TableCell align="right">{totalPrice}</TableCell>
                     </TableRow>
                   );
                 })}
@@ -398,34 +438,7 @@ export default function OfferTable({
 
       {/* Tlačítko pro generování PDF */}
       <Box sx={{ mb: 2 }}>
-        <Button variant="contained" onClick={async () => {
-          try {
-            const endpoint =
-              localOfferType === 'withQuantity'
-                ? `${API_BASE_URL}/api/generate-pdf-with-quantity`
-                : `${API_BASE_URL}/api/generate-pdf-without-quantity`;
-            const resp = await fetch(endpoint, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ offerSummary })
-            });
-            if (!resp.ok) {
-              throw new Error(`Chyba při generování PDF: ${resp.status} ${resp.statusText}`);
-            }
-            const blob = await resp.blob();
-            const url = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = localOfferType === 'withQuantity'
-              ? 'nabidka-with-quantity.pdf'
-              : 'nabidka-without-quantity.pdf';
-            link.click();
-            window.URL.revokeObjectURL(url);
-          } catch (err) {
-            console.error('Chyba při stahování PDF:', err);
-            alert('Nastala chyba při stahování PDF: ' + err.message);
-          }
-        }}>
+        <Button variant="contained" onClick={handleDownloadPDF}>
           Stáhnout PDF
         </Button>
       </Box>

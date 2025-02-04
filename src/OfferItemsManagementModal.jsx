@@ -1,399 +1,456 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  IconButton,
-  TextField,
-  Button,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
-  TableContainer,
+  Box,
   Paper,
   CircularProgress,
   Alert,
-  Typography
+  FormControl,
+  FormLabel,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+  Divider
 } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
 
-export default function OfferItemsManagementModal({ open, onClose, offerId, baseUrl }) {
-  // Stavy pro načtení aktuálních položek nabídky
-  const [offerItems, setOfferItems] = useState([]);
-  const [loadingOffer, setLoadingOffer] = useState(false);
-  const [errorOffer, setErrorOffer] = useState(null);
+/**
+ * Pomocná funkce pro přičtení dnů k datu ve formátu YYYY-MM-DD.
+ */
+function addDays(dateString, days) {
+  const date = new Date(dateString);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0];
+}
 
-  // Stavy pro získání detailů produktů pro položky nabídky
-  const [itemProductDetails, setItemProductDetails] = useState({});
+/**
+ * Sestaví jméno kontaktní osoby.
+ */
+function buildContactName(contact) {
+  if (!contact) return '';
+  const parts = [];
+  if (contact.titleBefore) parts.push(contact.titleBefore);
+  if (contact.firstName) parts.push(contact.firstName);
+  if (contact.lastName) parts.push(contact.lastName);
+  if (contact.titleAfter) parts.push(contact.titleAfter);
+  return parts.join(' ').trim();
+}
 
-  // Stavy pro vyhledávání produktů
-  const [searchQuery, setSearchQuery] = useState('');
-  const [products, setProducts] = useState([]);
-  const [loadingProducts, setLoadingProducts] = useState(false);
-  const [errorProducts, setErrorProducts] = useState(null);
+/**
+ * Vrátí zadanou hodnotu nebo "Neuvedeno".
+ */
+function showOrNeuvedeno(value) {
+  return value == null || value === '' ? 'Neuvedeno' : value;
+}
 
-  // Stavy pro přidání nové položky
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [quantity, setQuantity] = useState(1);
-  const [price, setPrice] = useState('');
-  const [discountPercent, setDiscountPercent] = useState('');
-  const [taxRate, setTaxRate] = useState(21);
+/**
+ * Vrátí zadanou hodnotu nebo prázdný řetězec.
+ */
+function showOrBlank(value) {
+  return value == null || value === '' ? '' : value;
+}
 
-  // Stavy pro editaci existující položky
-  const [editingItemId, setEditingItemId] = useState(null);
-  const [editingQuantity, setEditingQuantity] = useState('');
-  const [editingPrice, setEditingPrice] = useState('');
-  const [editingDiscount, setEditingDiscount] = useState('');
-  const [editingTaxRate, setEditingTaxRate] = useState('');
+/**
+ * Výpočet ceny po slevě.
+ */
+function calculatePriceAfterDiscount(price, discountPercent) {
+  const p = parseFloat(price);
+  const d = parseFloat(discountPercent);
+  if (isNaN(p) || isNaN(d)) return "";
+  return (p * (1 - d / 100)).toFixed(2);
+}
 
-  // Při otevření modalu načteme aktuální položky nabídky
+/**
+ * Seskupí položky nabídky podle zadaného klíče v customFields.
+ * Pokud groupByKey je "none" nebo null, všechny položky skončí ve stejné skupině.
+ *
+ * V této verzi se párování provádí podle item.id (nová struktura položek).
+ */
+function groupItemsByCustomField(items, productDetails, groupByKey) {
+  const grouped = {};
+  items.forEach(item => {
+    const prodId = item.id; // změněno – původně item.priceListItem.product.id
+    const product = item.product || productDetails[prodId];
+    if (!product) return;
+    let groupValue = "(Nezařazeno)";
+    if (groupByKey && product.customFields && product.customFields[groupByKey]) {
+      groupValue = String(product.customFields[groupByKey]);
+    }
+    if (!grouped[groupValue]) {
+      grouped[groupValue] = [];
+    }
+    grouped[groupValue].push(item);
+  });
+  return grouped;
+}
+
+export default function OfferTable({
+  offerData,
+  productDetails,
+  supplierData,
+  buyerData,
+  groupByKey, // počáteční hodnota seskupení (např. "Naprava_fe9fa")
+  offerType,  // počáteční hodnota – "withQuantity" nebo "noQuantity"
+  onSummaryReady
+}) {
+  const [ownerContact, setOwnerContact] = useState(null);
+  const [personContact, setPersonContact] = useState(null);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [errorContacts, setErrorContacts] = useState(null);
+
+  // Stav pro výběr typu šablony (s množstvím / bez množství)
+  const [localOfferType, setLocalOfferType] = useState(offerType || 'withQuantity');
+  // Stav pro výběr seskupení – možnosti: "Naprava_fe9fa", "Rozmer_5ce97", "Provoz_2c25f", "none"
+  const [localGroupByKey, setLocalGroupByKey] = useState(groupByKey || 'Naprava_fe9fa');
+
+  const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
+
+  // Načtení kontaktních údajů dodavatele (owner)
   useEffect(() => {
-    if (open && offerId) {
-      fetchOfferItems();
+    async function fetchOwner() {
+      if (offerData?.owner?.id) {
+        setLoadingContacts(true);
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/person-detail/${offerData.owner.id}`);
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || 'Chyba při načítání údajů dodavatele.');
+          }
+          const json = await res.json();
+          setOwnerContact(json.data);
+        } catch (err) {
+          console.error(err);
+          setErrorContacts(err.message);
+        } finally {
+          setLoadingContacts(false);
+        }
+      }
     }
-  }, [open, offerId, baseUrl]);
+    fetchOwner();
+  }, [offerData, API_BASE_URL]);
 
-  async function fetchOfferItems() {
-    setLoadingOffer(true);
-    setErrorOffer(null);
-    try {
-      const res = await fetch(`${baseUrl}/api/raynet-offer/${offerId}`);
-      if (!res.ok) throw new Error(`Chyba při načítání nabídky: ${res.status}`);
-      const json = await res.json();
-      const offer = json.data.data;
-      const items = offer.items || [];
-      setOfferItems(items);
-    } catch (err) {
-      console.error(err);
-      setErrorOffer(err.message);
-    } finally {
-      setLoadingOffer(false);
-    }
-  }
-
-  // Po načtení položek získáme detaily produktů pro unikátní ID produktů
+  // Načtení kontaktních údajů odběratele (person)
   useEffect(() => {
-    if (offerItems.length === 0) return;
-    const productIds = Array.from(new Set(offerItems.map(item => item.priceListItem.product.id)));
-    Promise.all(
-      productIds.map(id =>
-        fetch(`${baseUrl}/api/product/${id}`)
-          .then(res => {
-            if (!res.ok) throw new Error(`Chyba při načítání produktu ${id}: ${res.status}`);
-            return res.json();
-          })
-          .then(prodJson => ({ id, data: prodJson.data.data }))
-      )
-    )
-      .then(results => {
-        const mapping = {};
-        results.forEach(result => {
-          mapping[result.id] = result.data;
-        });
-        setItemProductDetails(mapping);
-      })
-      .catch(err => console.error(err));
-  }, [offerItems, baseUrl]);
-
-  // Vyhledávání produktů pomocí zadaného dotazu
-  async function handleSearchProducts() {
-    if (!searchQuery) return;
-    setLoadingProducts(true);
-    setErrorProducts(null);
-    try {
-      const res = await fetch(`${baseUrl}/api/products?search=${encodeURIComponent(searchQuery)}`);
-      if (!res.ok) throw new Error(`Chyba při načítání produktů: ${res.status}`);
-      const data = await res.json();
-      setProducts(data.data || []);
-    } catch (err) {
-      console.error(err);
-      setErrorProducts(err.message);
-    } finally {
-      setLoadingProducts(false);
+    async function fetchPerson() {
+      if (offerData?.person?.id) {
+        setLoadingContacts(true);
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/person-detail/${offerData.person.id}`);
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || 'Chyba při načítání údajů odběratele.');
+          }
+          const json = await res.json();
+          setPersonContact(json.data);
+        } catch (err) {
+          console.error(err);
+          setErrorContacts(err.message);
+        } finally {
+          setLoadingContacts(false);
+        }
+      }
     }
-  }
+    fetchPerson();
+  }, [offerData, API_BASE_URL]);
 
-  // Přidání nové položky pomocí PUT na /api/raynet-offer/{offerId}/item
-  async function handleAddItem() {
-    if (!selectedProduct) {
-      alert("Vyberte produkt.");
-      return;
+  // Sestavení offerSummary včetně seskupení dle aktuální volby a s přátelským názvem skupin
+  const offerSummary = useMemo(() => {
+    if (!offerData || !offerData.items || Object.keys(productDetails).length === 0) {
+      return null;
     }
-    try {
-      const body = {
-        productId: selectedProduct.id,
-        price: parseFloat(price),
-        discountPercent: parseFloat(discountPercent),
-        quantity: parseFloat(quantity),
-        taxRate: parseFloat(taxRate)
-      };
-      const res = await fetch(`${baseUrl}/api/raynet-offer/${offerId}/item`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+    const validFrom = offerData.validFrom || "Neuvedeno";
+    const expirationDate = offerData.expirationDate
+      ? offerData.expirationDate
+      : (validFrom !== "Neuvedeno" ? addDays(validFrom, 10) : "Neuvedeno");
+
+    // Upravená logika – párování se provádí podle item.id a cena i sleva jsou přímo na úrovni položky
+    const enrichedItems = offerData.items.map(item => {
+      const prodId = item.id; // původně: item.priceListItem.product.id
+      const details = productDetails[prodId];
+      if (details) {
+        // Uložení detailů produktu (včetně customFields) do nové vlastnosti "product"
+        item.product = { ...details };
+      }
+      return item;
+    });
+
+    // Pokud se má seskupovat, použijeme groupByKey, jinak všechny položky v jedné skupině
+    const groupingKey = localGroupByKey === "none" ? null : localGroupByKey;
+    const groupedItems = groupItemsByCustomField(enrichedItems, productDetails, groupingKey);
+
+    // Mapa pro přátelské názvy seskupení – použije se jak ve frontendu, tak v šabloně
+    const groupLabelMapping = {
+      Naprava_fe9fa: "Náprava",
+      Rozmer_5ce97: "Rozměr",
+      Provoz_2c25f: "Provoz"
+    };
+
+    // Transformace původních klíčů do přátelských názvů
+    let friendlyGroupedItems = {};
+    if (localGroupByKey !== "none") {
+      const label = groupLabelMapping[localGroupByKey] || "Skupina";
+      Object.entries(groupedItems).forEach(([key, items]) => {
+        // Pokud je hodnota "(Nezařazeno)", zobrazíme pouze název skupiny bez hodnoty
+        friendlyGroupedItems[label + (key === "(Nezařazeno)" ? "" : `: ${key}`)] = items;
       });
-      if (!res.ok) throw new Error(`Chyba při přidávání položky: ${res.status}`);
-      await fetchOfferItems();
-      // Reset formuláře
-      setSelectedProduct(null);
-      setQuantity(1);
-      setPrice('');
-      setDiscountPercent('');
-      setTaxRate(21);
-      setProducts([]);
-      setSearchQuery('');
-    } catch (err) {
-      console.error(err);
-      alert("Nepodařilo se přidat položku: " + err.message);
+    } else {
+      friendlyGroupedItems = groupedItems;
     }
-  }
 
-  // Zahájení režimu editace pro danou položku
-  function startEditItem(item) {
-    setEditingItemId(item.id);
-    setEditingQuantity(item.count || 1);
-    setEditingPrice(item.priceListItem?.price || '');
-    setEditingDiscount(item.discountPercent || '');
-    setEditingTaxRate(item.taxRate || 21);
-  }
+    const defaultSupplier = {
+      companyName: 'CZECH STYLE, spol. s r.o.',
+      street: 'Tečovská 1239',
+      cityZip: '763 02 Zlín-Malenovice',
+      country: 'Česká republika',
+      ico: '25560174',
+      dic: 'CZ25560174'
+    };
 
-  // Uložení upravené položky pomocí POST na /api/raynet-offer/{offerId}/item/{offerItemId}
-  async function handleSaveEditItem() {
-    if (!editingItemId) return;
+    const supplierInfo = ownerContact
+      ? {
+          companyName: ownerContact.company?.name || defaultSupplier.companyName,
+          street: ownerContact.privateAddress?.street || defaultSupplier.street,
+          cityZip: `${ownerContact.privateAddress?.zipCode || '763 02'} ${ownerContact.privateAddress?.city || 'Zlín-Malenovice'}`,
+          country: ownerContact.privateAddress?.country || defaultSupplier.country,
+          ico: ownerContact.customFields?.ICO || defaultSupplier.ico,
+          dic: ownerContact.customFields?.DIC || defaultSupplier.dic
+        }
+      : (supplierData || defaultSupplier);
+
+    const sContactName = ownerContact
+      ? (buildContactName(ownerContact) || 'Zákaznický servis')
+      : 'Zákaznický servis';
+
+    const supplierContactInfo = ownerContact
+      ? {
+          contactPerson: sContactName,
+          email: ownerContact.contactInfo?.email || 'info@czstyle.cz',
+          tel: ownerContact.contactInfo?.tel1 || '+420 777 777 777'
+        }
+      : {
+          contactPerson: sContactName,
+          email: 'info@czstyle.cz',
+          tel: '+420 571 120 100'
+        };
+
+    const buyerInfo = personContact
+      ? {
+          name: buyerData?.name || 'Neuvedeno',
+          street: buyerData?.primaryAddress?.address?.street || 'Neuvedeno',
+          cityZip: `${buyerData?.primaryAddress?.address?.zipCode || ''} ${buyerData?.primaryAddress?.address?.city || ''}`.trim() || 'Neuvedeno',
+          country: buyerData?.primaryAddress?.address?.country || 'Neuvedeno',
+          ico: personContact.customFields?.ICO || buyerData?.regNumber || 'Neuvedeno',
+          dic: personContact.customFields?.DIC || buyerData?.taxNumber || 'Neuvedeno'
+        }
+      : {
+          name: buyerData?.name || 'Neuvedeno',
+          street: buyerData?.primaryAddress?.address?.street || 'Neuvedeno',
+          cityZip: `${buyerData?.primaryAddress?.address?.zipCode || ''} ${buyerData?.primaryAddress?.address?.city || ''}`.trim() || 'Neuvedeno',
+          country: buyerData?.primaryAddress?.address?.country || 'Neuvedeno',
+          ico: buyerData?.regNumber || 'Neuvedeno',
+          dic: buyerData?.taxNumber || 'Neuvedeno'
+        };
+
+    const bContactName = personContact
+      ? (buildContactName(personContact) || 'Pneuservis')
+      : 'Pneuservis';
+
+    const buyerContactInfo = personContact
+      ? {
+          contactPerson: bContactName,
+          email: buyerData?.primaryAddress?.contactInfo?.email || 'Neuvedeno',
+          tel: personContact.contactInfo?.tel1 || buyerData?.primaryAddress?.contactInfo?.tel1 || 'Neuvedeno',
+          www: personContact.contactInfo?.www || buyerData?.primaryAddress?.contactInfo?.www || 'Neuvedeno'
+        }
+      : {
+          contactPerson: bContactName,
+          email: buyerData?.primaryAddress?.contactInfo?.email || 'Neuvedeno',
+          tel: buyerData?.primaryAddress?.contactInfo?.tel1 || 'Neuvedeno',
+          www: buyerData?.primaryAddress?.contactInfo?.www || 'Neuvedeno'
+        };
+
+    return {
+      offerCode: offerData?.code || "NAB-KÓD NEUVEDEN",
+      validFrom,
+      expirationDate,
+      description: offerData.description,
+      supplier: {
+        info: supplierInfo,
+        contact: supplierContactInfo
+      },
+      buyer: {
+        info: buyerInfo,
+        contact: buyerContactInfo
+      },
+      // Předáme seskupené položky s přátelským názvem skupiny
+      productGroups: friendlyGroupedItems
+    };
+  }, [
+    offerData,
+    productDetails,
+    localGroupByKey,
+    supplierData,
+    buyerData,
+    ownerContact,
+    personContact,
+    localOfferType
+  ]);
+
+  // Předání offerSummary do rodiče (pokud je potřeba)
+  useEffect(() => {
+    if (offerSummary && onSummaryReady) {
+      onSummaryReady(offerSummary);
+    }
+  }, [offerSummary, onSummaryReady]);
+
+  if (loadingContacts) return <CircularProgress />;
+  if (errorContacts) return <Alert severity="error">{errorContacts}</Alert>;
+  if (!offerData || !offerSummary) return <Box>Načítám souhrn nabídky...</Box>;
+
+  // Funkce pro vykreslení nadpisu skupiny – nyní zobrazí již přátelský název
+  const renderGroupHeader = (groupKey) => {
+    if (localGroupByKey === "none") return null;
+    return (
+      <Box sx={{ mb: 1 }}>
+        <strong>{groupKey}</strong>
+      </Box>
+    );
+  };
+
+  /**
+   * Funkce pro stažení PDF – volá správný endpoint dle volby šablony
+   */
+  async function handleDownloadPDF() {
     try {
-      const body = {
-        price: parseFloat(editingPrice),
-        discountPercent: parseFloat(editingDiscount),
-        quantity: parseFloat(editingQuantity),
-        taxRate: parseFloat(editingTaxRate)
-      };
-      const res = await fetch(`${baseUrl}/api/raynet-offer/${offerId}/item/${editingItemId}`, {
+      const endpoint =
+        localOfferType === 'withQuantity'
+          ? `${API_BASE_URL}/api/generate-pdf-with-quantity`
+          : `${API_BASE_URL}/api/generate-pdf-without-quantity`;
+
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ offerSummary })
       });
-      if (!res.ok) throw new Error(`Chyba při úpravě položky: ${res.status}`);
-      await fetchOfferItems();
-      setEditingItemId(null);
+      if (!resp.ok) {
+        throw new Error(`Chyba při generování PDF: ${resp.status} ${resp.statusText}`);
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = localOfferType === 'withQuantity'
+        ? 'nabidka-with-quantity.pdf'
+        : 'nabidka-without-quantity.pdf';
+      link.click();
+      window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error(err);
-      alert("Nepodařilo se upravit položku: " + err.message);
+      console.error('Chyba při stahování PDF:', err);
+      alert('Nastala chyba při stahování PDF: ' + err.message);
     }
   }
 
-  function handleCancelEdit() {
-    setEditingItemId(null);
-  }
-
-  // Odstranění položky pomocí DELETE na /api/raynet-offer/{offerId}/item/{offerItemId}
-  async function handleRemoveItem(itemId) {
-    if (!window.confirm("Opravdu chcete smazat položku?")) return;
-    try {
-      const res = await fetch(`${baseUrl}/api/raynet-offer/${offerId}/item/${itemId}`, {
-        method: 'DELETE'
-      });
-      if (!res.ok) throw new Error(`Chyba při mazání položky: ${res.status}`);
-      await fetchOfferItems();
-    } catch (err) {
-      console.error(err);
-      alert("Nepodařilo se odstranit položku: " + err.message);
-    }
-  }
-
-  function handleClose() {
-    onClose();
-  }
-
-  return (
-    <Dialog open={open} onClose={handleClose} maxWidth="lg" fullWidth>
-      <DialogTitle>
-        Správa položek nabídky
-        <IconButton onClick={handleClose} sx={{ position: 'absolute', right: 8, top: 8 }}>
-          <CloseIcon />
-        </IconButton>
-      </DialogTitle>
-      <DialogContent dividers>
-        <Typography variant="h6" gutterBottom>
-          Aktuální položky
-        </Typography>
-        {loadingOffer && <CircularProgress />}
-        {errorOffer && <Alert severity="error">{errorOffer}</Alert>}
-        {!loadingOffer && !errorOffer && (
-          <TableContainer component={Paper} sx={{ mb: 2 }}>
+  // Funkce pro vykreslení přehledu produktů pomocí MUI Table
+  const renderProductOverview = () => {
+    return Object.keys(offerSummary.productGroups).map((groupKey) => {
+      const items = offerSummary.productGroups[groupKey];
+      return (
+        <Box key={groupKey} sx={{ mb: 3 }}>
+          {renderGroupHeader(groupKey)}
+          <TableContainer component={Paper} variant="outlined">
             <Table size="small">
               <TableHead>
                 <TableRow>
                   <TableCell>Kód</TableCell>
-                  <TableCell>Název</TableCell>
-                  <TableCell align="center">Množství</TableCell>
-                  <TableCell align="center">Náprava</TableCell>
-                  <TableCell align="center">Provoz</TableCell>
-                  <TableCell align="center">Akce</TableCell>
+                  <TableCell>Název produktu</TableCell>
+                  <TableCell align="center">Počet</TableCell>
+                  <TableCell align="right">Cena/ks</TableCell>
+                  <TableCell align="right">Sleva (%)</TableCell>
+                  <TableCell align="right">Cena po slevě</TableCell>
+                  <TableCell align="right">Celkem</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {offerItems.map(item => {
-                  const prodDetail = itemProductDetails[item.priceListItem.product.id] || {};
-                  const productName = prodDetail.name || item.priceListItem?.product?.name || 'Produkt';
-                  const productCode = prodDetail.code || item.priceListItem?.product?.code || '';
-                  // Z customFields získáme pouze hodnotu pro "Náprava" a "Provoz"
-                  const naprava = prodDetail.customFields ? prodDetail.customFields["Naprava_fe9fa"] || '' : '';
-                  const provoz = prodDetail.customFields ? prodDetail.customFields["Provoz_2c25f"] || '' : '';
-                  if (editingItemId === item.id) {
-                    return (
-                      <TableRow key={item.id}>
-                        <TableCell>{productCode}</TableCell>
-                        <TableCell>
-                          <strong>{productName}</strong>
-                        </TableCell>
-                        <TableCell>
-                          <TextField
-                            label="Množství"
-                            type="number"
-                            size="small"
-                            value={editingQuantity}
-                            onChange={(e) => setEditingQuantity(e.target.value)}
-                          />
-                        </TableCell>
-                        <TableCell align="center">{naprava}</TableCell>
-                        <TableCell align="center">{provoz}</TableCell>
-                        <TableCell>
-                          <Button variant="contained" onClick={handleSaveEditItem}>
-                            Uložit
-                          </Button>
-                          <Button onClick={handleCancelEdit}>Zrušit</Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  } else {
-                    return (
-                      <TableRow key={item.id}>
-                        <TableCell>{productCode}</TableCell>
-                        <TableCell>
-                          <strong>{productName}</strong>
-                        </TableCell>
-                        <TableCell align="center">{item.count}</TableCell>
-                        <TableCell align="center">{naprava}</TableCell>
-                        <TableCell align="center">{provoz}</TableCell>
-                        <TableCell>
-                          <Button variant="outlined" size="small" onClick={() => startEditItem(item)}>
-                            Upravit
-                          </Button>
-                          <Button variant="outlined" color="error" size="small" onClick={() => handleRemoveItem(item.id)}>
-                            Smazat
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  }
+                {items.map((item) => {
+                  // V novém datovém modelu získáváme produktové detaily z item.product
+                  const product = item.product || {};
+                  // Ceníková cena a sleva se nyní získávají z item.price a item.discountPercent
+                  const priceRaw = item.price;
+                  const discountRaw = item.discountPercent;
+                  const priceAfter = calculatePriceAfterDiscount(priceRaw, discountRaw);
+                  const quantityValue = item.count || 0;
+                  const totalPrice = (parseFloat(priceAfter) * parseFloat(quantityValue)).toFixed(2);
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell>{showOrNeuvedeno(product?.code)}</TableCell>
+                      <TableCell>{showOrNeuvedeno(product?.name)}</TableCell>
+                      <TableCell align="center">{quantityValue}</TableCell>
+                      <TableCell align="right">{priceRaw}</TableCell>
+                      <TableCell align="right">{discountRaw}</TableCell>
+                      <TableCell align="right">{priceAfter}</TableCell>
+                      <TableCell align="right">{totalPrice}</TableCell>
+                    </TableRow>
+                  );
                 })}
-                {offerItems.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} align="center">
-                      <em>Žádné položky</em>
-                    </TableCell>
-                  </TableRow>
-                )}
               </TableBody>
             </Table>
           </TableContainer>
-        )}
+        </Box>
+      );
+    });
+  };
 
-        <Typography variant="h6" gutterBottom>
-          Přidat novou položku
-        </Typography>
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'flex-end' }}>
-          <TextField
-            label="Hledat produkt"
-            variant="outlined"
-            size="small"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSearchProducts(); }}
-          />
-          <Button variant="outlined" onClick={handleSearchProducts}>
-            Filtrovat
-          </Button>
-        </div>
-        {loadingProducts && <CircularProgress />}
-        {errorProducts && <Alert severity="error">{errorProducts}</Alert>}
-        <TableContainer component={Paper} sx={{ mb: 2 }}>
-          <Table size="small">
-            <TableBody>
-              {products.map(prod => (
-                <TableRow
-                  key={prod.id}
-                  hover
-                  onClick={() => setSelectedProduct(prod)}
-                  selected={selectedProduct?.id === prod.id}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <TableCell>
-                    <strong>{prod.name}</strong>
-                    <br />{prod.code && `Kód: ${prod.code}`}
-                  </TableCell>
-                  <TableCell>{prod.manufacturer}</TableCell>
-                </TableRow>
-              ))}
-              {products.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={2} align="center">
-                    <em>Žádné produkty...</em>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        {selectedProduct && (
-          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-            <div>
-              <strong>{selectedProduct.name}</strong>
-              <br />
-              {selectedProduct.code}
-            </div>
-            <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-              <TextField
-                label="Množství"
-                type="number"
-                size="small"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-              />
-              <TextField
-                label="Cena/ks"
-                type="number"
-                size="small"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-              />
-              <TextField
-                label="Sleva (%)"
-                type="number"
-                size="small"
-                value={discountPercent}
-                onChange={(e) => setDiscountPercent(e.target.value)}
-              />
-              <TextField
-                label="DPH (%)"
-                type="number"
-                size="small"
-                value={taxRate}
-                onChange={(e) => setTaxRate(e.target.value)}
-              />
-              <Button variant="contained" onClick={handleAddItem}>
-                Přidat do nabídky
-              </Button>
-            </div>
-          </Paper>
-        )}
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={handleClose}>Zavřít</Button>
-      </DialogActions>
-    </Dialog>
+  return (
+    <Paper sx={{ p: 2, m: 2 }}>
+      {/* Přepínač pro výběr typu šablony */}
+      <FormControl component="fieldset" sx={{ mb: 2 }}>
+        <FormLabel component="legend">Typ šablony</FormLabel>
+        <RadioGroup
+          row
+          name="offerType"
+          value={localOfferType}
+          onChange={(e) => setLocalOfferType(e.target.value)}
+        >
+          <FormControlLabel value="withQuantity" control={<Radio />} label="S množstvím" />
+          <FormControlLabel value="noQuantity" control={<Radio />} label="Bez množství" />
+        </RadioGroup>
+      </FormControl>
+
+      {/* Přepínač pro výběr seskupení produktů */}
+      <FormControl component="fieldset" sx={{ mb: 2 }}>
+        <FormLabel component="legend">Seskupovat produkty podle:</FormLabel>
+        <RadioGroup
+          row
+          name="groupByKey"
+          value={localGroupByKey}
+          onChange={(e) => setLocalGroupByKey(e.target.value)}
+        >
+          <FormControlLabel value="Naprava_fe9fa" control={<Radio />} label="Náprava" />
+          <FormControlLabel value="Rozmer_5ce97" control={<Radio />} label="Rozměr" />
+          <FormControlLabel value="Provoz_2c25f" control={<Radio />} label="Provoz" />
+          <FormControlLabel value="none" control={<Radio />} label="Nezařazeno" />
+        </RadioGroup>
+      </FormControl>
+
+      {/* Tlačítko pro generování PDF */}
+      <Box sx={{ mb: 2 }}>
+        <Button variant="contained" onClick={handleDownloadPDF}>
+          Stáhnout PDF
+        </Button>
+      </Box>
+
+      {/* Přehled produktů */}
+      <Divider sx={{ mb: 2 }} />
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        Přehled produktů
+      </Typography>
+      {renderProductOverview()}
+    </Paper>
   );
 }
