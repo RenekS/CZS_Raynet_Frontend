@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Box, Button, Typography, CircularProgress, Alert } from '@mui/material';
 import OfferTable from './OfferTable';
+import OfferItemsManagementModal from './OfferItemsManagementModal';
 
 export default function RaynetClientInfo() {
   // Získáme parametry z URL
@@ -9,15 +10,22 @@ export default function RaynetClientInfo() {
   const entityName = (searchParams.get('entityName') || 'offer').toLowerCase();
   const baseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
 
-  // Stavy
+  // Stavy pro načítání nabídky, chybové hlášení, data nabídky atd.
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [offerData, setOfferData] = useState(null);
   const [companyData, setCompanyData] = useState(null);
   const [productDetails, setProductDetails] = useState({});
   const [offerSummary, setOfferSummary] = useState(null);
+  // Stav pro zobrazení modalu pro správu položek nabídky
+  const [modalOpen, setModalOpen] = useState(false);
 
-  // Načítáme pouze nabídky (offer)
+  // Memoizovaný callback pro předání souhrnu nabídky (např. z OfferTable)
+  const handleSummaryReady = useCallback((summary) => {
+    setOfferSummary(summary);
+  }, []);
+
+  // Načítání nabídky (a souvisejících dat) při změně entityId, entityName nebo baseUrl
   useEffect(() => {
     async function fetchOffer() {
       try {
@@ -29,7 +37,7 @@ export default function RaynetClientInfo() {
         const offer = json.data.data;
         setOfferData(offer);
 
-        // Načtení dat firmy (odběratele) pokud jsou k dispozici
+        // Načtení dat firmy (odběratele), pokud jsou k dispozici
         if (offer?.company?.id) {
           const companyRes = await fetch(`${baseUrl}/api/company/${offer.company.id}`);
           if (!companyRes.ok) throw new Error(`Chyba při načítání firmy: ${companyRes.status}`);
@@ -67,14 +75,13 @@ export default function RaynetClientInfo() {
     }
   }, [entityId, entityName, baseUrl]);
 
-  // Funkce, která odešle data do backendu pro vygenerování PDF
+  // Funkce pro generování PDF
   async function handleGeneratePdf() {
     if (!offerSummary) {
       alert("Offer summary ještě není připraven.");
       return;
     }
     try {
-      // Předáme pouze offerSummary a typ ceníku (zde 'withQuantity')
       const payload = {
         offerSummary,
         offerType: 'withQuantity'
@@ -106,9 +113,27 @@ export default function RaynetClientInfo() {
   return (
     <Box sx={{ p: 2 }}>
       <Typography variant="h5" sx={{ mb: 2 }}>Detail nabídky</Typography>
-      <Button variant="contained" color="primary" onClick={handleGeneratePdf} sx={{ mb: 2 }}>
+
+      {/* Tlačítko pro otevření modalu ke správě položek nabídky */}
+      <Button
+        variant="contained"
+        color="primary"
+        onClick={() => setModalOpen(true)}
+        sx={{ mb: 2 }}
+      >
+        Upravit nabídku
+      </Button>
+
+      {/* Tlačítko pro export do PDF */}
+      <Button
+        variant="contained"
+        color="secondary"
+        onClick={handleGeneratePdf}
+        sx={{ mb: 2, ml: 2 }}
+      >
         Export do PDF
       </Button>
+
       <OfferTable 
         offerData={offerData}
         productDetails={productDetails}
@@ -116,7 +141,15 @@ export default function RaynetClientInfo() {
         buyerData={companyData}
         groupByKey="Naprava_fe9fa"
         offerType="withQuantity"
-        onSummaryReady={setOfferSummary}
+        onSummaryReady={handleSummaryReady}
+      />
+
+      {/* Modal pro správu položek nabídky – předáváme ID nabídky a baseUrl */}
+      <OfferItemsManagementModal 
+        open={modalOpen} 
+        onClose={() => setModalOpen(false)} 
+        offerId={offerData.id}
+        baseUrl={baseUrl}
       />
     </Box>
   );
